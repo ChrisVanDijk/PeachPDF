@@ -597,7 +597,8 @@ namespace PeachPDF.Html.Core.Dom
                 var isGraphemeBoundary = IsGraphemeBoundaryBefore(
                     previousWord, word, trailingRegionalIndicatorCount, trailingGraphemeContext);
                 var hasOrdinaryWrapBefore = HasOrdinaryWrapOpportunityBefore(
-                    previousWord, word, precedingRegionalIndicatorCount: trailingRegionalIndicatorCount,
+                    previousWord, word, isGraphemeBoundary,
+                    precedingRegionalIndicatorCount: trailingRegionalIndicatorCount,
                     precedingGraphemeContext: trailingGraphemeContext);
 
                 // white-space: nowrap/pre on word's own owning box must never register as "doesn't fit" -
@@ -2887,12 +2888,13 @@ namespace PeachPDF.Html.Core.Dom
                         var previousWord = coordinates.Line.Words.Count > 0
                             ? coordinates.Line.Words[^1]
                             : null;
-                        var hasOrdinaryWrapBefore = HasOrdinaryWrapOpportunityBefore(
-                            previousWord, word, childHasLeadingWhitespace && wordIndex == 0,
-                            coordinates.TrailingRegionalIndicatorCount,
-                            coordinates.TrailingGraphemeContext);
                         var isGraphemeBoundary = IsGraphemeBoundaryBefore(
                             previousWord, word, coordinates.TrailingRegionalIndicatorCount,
+                            coordinates.TrailingGraphemeContext);
+                        var hasOrdinaryWrapBefore = HasOrdinaryWrapOpportunityBefore(
+                            previousWord, word, isGraphemeBoundary,
+                            childHasLeadingWhitespace && wordIndex == 0,
+                            coordinates.TrailingRegionalIndicatorCount,
                             coordinates.TrailingGraphemeContext);
 
                         if (!word.SuppressWrapBefore && overflows && !word.IsLineBreak && !wrapNoWrapBox &&
@@ -3607,8 +3609,19 @@ namespace PeachPDF.Html.Core.Dom
         /// unbreakable token, while the parser's real whitespace, hyphen, CJK, and break-all boundaries
         /// retain their existing behavior.
         /// </summary>
+        /// <param name="previous">the word placed immediately before <paramref name="word"/>, if any.</param>
+        /// <param name="word">the word whose leading boundary is being classified.</param>
+        /// <param name="isGraphemeBoundary">
+        /// <see cref="IsGraphemeBoundaryBefore"/> for the same pair. A grapheme boundary is a precondition
+        /// of an ordinary opportunity, and every caller already needs that answer in its own right, so it
+        /// is passed in rather than recomputed - segmenting one boundary twice per word is pure waste.
+        /// </param>
+        /// <param name="hasWhitespaceBefore">whether the caller already knows collapsible whitespace precedes the word.</param>
+        /// <param name="precedingRegionalIndicatorCount">regional indicators ending the content before the word (UAX #14 LB30a parity).</param>
+        /// <param name="precedingGraphemeContext">the trailing grapheme cluster before the word, spanning inline owners.</param>
         internal static bool HasOrdinaryWrapOpportunityBefore(
-            CssRect? previous, CssRect word, bool hasWhitespaceBefore = false,
+            CssRect? previous, CssRect word, bool isGraphemeBoundary,
+            bool hasWhitespaceBefore = false,
             int precedingRegionalIndicatorCount = 0, string? precedingGraphemeContext = null)
         {
             if (word.SuppressWrapBefore || previous is null)
@@ -3619,8 +3632,7 @@ namespace PeachPDF.Html.Core.Dom
 
             Rune.DecodeLastFromUtf16(previousWord.Text.AsSpan(), out var previousRune, out _);
             Rune.DecodeFromUtf16(currentWord.Text.AsSpan(), out var currentRune, out _);
-            if (!IsGraphemeBoundaryBefore(previousWord, currentWord, precedingRegionalIndicatorCount,
-                    precedingGraphemeContext)
+            if (!isGraphemeBoundary
                 || ProhibitsLineBreakAfter(previousRune) || ProhibitsLineBreakBefore(currentRune))
                 return false;
 
@@ -3659,9 +3671,29 @@ namespace PeachPDF.Html.Core.Dom
             var context = string.IsNullOrEmpty(precedingGraphemeContext)
                 ? previousWord.Text
                 : precedingGraphemeContext;
+
+            // No UAX #29 rule joins two grapheme-neutral ASCII characters, so the boundary between them
+            // is certain without segmenting anything - the common case for adjacent Latin inline runs.
+            if (context.Length > 0 && currentWord.Text.Length > 0
+                && IsGraphemeNeutralAscii(context[^1]) && IsGraphemeNeutralAscii(currentWord.Text[0]))
+                return true;
+
             var combined = string.Concat(context, currentWord.Text);
             var boundary = context.Length;
-            return Array.BinarySearch(StringInfo.ParseCombiningCharacters(combined), boundary) >= 0;
+
+            // Only whether this one index is a cluster start is in question, so walk to it and stop.
+            // StringInfo.ParseCombiningCharacters would segment the whole string and allocate an int[]
+            // of every boundary just to binary-search one of them.
+            var span = combined.AsSpan();
+            for (var position = 0; position < span.Length && position <= boundary;)
+            {
+                if (position == boundary)
+                    return true;
+
+                position += StringInfo.GetNextTextElementLength(span[position..]);
+            }
+
+            return false;
         }
 
         private static bool ProhibitsLineBreakAfter(Rune rune) =>
@@ -3712,14 +3744,77 @@ namespace PeachPDF.Html.Core.Dom
             return text.IsEmpty ? precedingCount + count : count;
         }
 
+        /// <summary>
+        /// Single-character strings for the printable ASCII range, so the fast path in
+        /// <see cref="UpdateTrailingGraphemeContext"/> - which every placed word takes for ordinary
+        /// Latin text - returns its trailing cluster without allocating one per word.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately its own type rather than a static field on <see cref="CssLayoutEngine"/>, which
+        /// otherwise holds no static state at all: a static initializer on that class would put a
+        /// class-initialization check in front of static methods layout calls per word. Holding the table
+        /// on a separate type keeps that question from arising at all.
+        /// </remarks>
+        private static class AsciiGraphemeContexts
+        {
+            internal static readonly string[] Single =
+                [.. Enumerable.Range(FirstPrintableAscii, LastPrintableAscii - FirstPrintableAscii + 1)
+                    .Select(c => ((char)c).ToString())];
+        }
+
+        private const int FirstPrintableAscii = 0x20;
+        private const int LastPrintableAscii = 0x7E;
+
+        /// <summary>
+        /// Whether <paramref name="c"/> is printable ASCII, which UAX #29 gives no grapheme-joining role:
+        /// it is never Extend, SpacingMark, ZWJ, Prepend, a regional indicator, extended pictographic,
+        /// Hangul, CR/LF, or a surrogate. A boundary therefore always exists between two such characters,
+        /// which is what lets the trailing cluster be read without segmenting the whole string.
+        /// </summary>
+        private static bool IsGraphemeNeutralAscii(char c) => c is >= (char)FirstPrintableAscii and <= (char)LastPrintableAscii;
+
+        /// <summary>
+        /// Whether the character immediately before <paramref name="text"/>'s final one - taken from
+        /// <paramref name="text"/> itself, else from the end of <paramref name="precedingContext"/> - is
+        /// grapheme-neutral, or absent entirely because both are exhausted. Either way no UAX #29 rule can
+        /// join it to the final character, so that character stands alone as the trailing cluster.
+        /// </summary>
+        private static bool PrecedingCharacterIsGraphemeNeutral(string precedingContext, string text)
+        {
+            if (text.Length > 1)
+                return IsGraphemeNeutralAscii(text[^2]);
+
+            return precedingContext.Length == 0 || IsGraphemeNeutralAscii(precedingContext[^1]);
+        }
+
         internal static string UpdateTrailingGraphemeContext(string precedingContext, string text)
         {
+            // The trailing cluster of ordinary Latin text is its final character, and none of the rules
+            // that could extend it leftwards (GB9/GB9a/GB9b, GB11's ZWJ, GB12-13's regional indicators)
+            // can fire between two grapheme-neutral ASCII characters. Reading it directly skips both the
+            // concatenation and the full segmentation pass the general path below needs.
+            if (text.Length > 0 && IsGraphemeNeutralAscii(text[^1])
+                && PrecedingCharacterIsGraphemeNeutral(precedingContext, text))
+            {
+                return AsciiGraphemeContexts.Single[text[^1] - FirstPrintableAscii];
+            }
+
             var combined = string.Concat(precedingContext, text);
             if (combined.Length == 0)
                 return string.Empty;
 
-            var boundaries = StringInfo.ParseCombiningCharacters(combined);
-            return combined[boundaries[^1]..];
+            // Walk the clusters rather than materializing every boundary through
+            // StringInfo.ParseCombiningCharacters: only the last one is wanted, so the int[] that call
+            // allocates - sized to the whole string's cluster count - is pure waste.
+            var span = combined.AsSpan();
+            var lastStart = 0;
+            for (var position = 0; position < span.Length;)
+            {
+                lastStart = position;
+                position += StringInfo.GetNextTextElementLength(span[position..]);
+            }
+
+            return combined[lastStart..];
         }
 
         private static (int RegionalIndicatorCount, string GraphemeContext) UpdateTrailingTextState(

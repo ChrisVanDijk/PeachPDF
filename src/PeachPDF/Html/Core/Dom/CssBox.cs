@@ -7078,7 +7078,7 @@ namespace PeachPDF.Html.Core.Dom
                     if ((anywhereAffectsMinContent || previousAnywhereAffectsMinContent)
                             && isGraphemeBoundary
                         || CssLayoutEngine.HasOrdinaryWrapOpportunityBefore(
-                            previousWord, word,
+                            previousWord, word, isGraphemeBoundary,
                             precedingRegionalIndicatorCount: trailingRegionalIndicatorCount,
                             precedingGraphemeContext: trailingGraphemeContext))
                     {

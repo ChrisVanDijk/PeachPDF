@@ -302,6 +302,13 @@ namespace PeachPDF.Html.Core.Utils
         /// </summary>
         public static bool IsEmojiLineBreakCharacter(Rune rune)
         {
+            // Every range lives between the first and last table entry, so one comparison against those
+            // bounds retires the whole search for Latin, Greek, Cyrillic and CJK text - the overwhelming
+            // majority of the codepoints this is asked about, since the tokenizer asks per character.
+            if (rune.Value < _emojiLineBreakRanges[0].Start
+                || rune.Value > _emojiLineBreakRanges[^1].End)
+                return false;
+
             var low = 0;
             var high = _emojiLineBreakRanges.Length - 1;
             while (low <= high)
