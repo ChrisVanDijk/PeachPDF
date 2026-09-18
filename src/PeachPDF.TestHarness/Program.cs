@@ -4544,6 +4544,87 @@ await SaveShowcaseAsync("svg_form_reuse", "Graphics & Effects", "SVG Form XObjec
     "The same SVG logo and SVG border-image on all twelve pages: each is stored once as a document-local Form XObject and invoked wherever it appears, rather than written into the PDF again per page - two copies of the artwork instead of twenty-four, and a file around 40% smaller.",
     svgFormReuseHtml, pdfConfig);
 
+// --- Repeated ordinary <img> sources showcase ---
+
+// Unlike the fixed elements in svg_form_reuse, these are four independent, normal-flow <img> boxes:
+// page 1 has one SVG and one PNG, and page 2 repeats those exact same data URIs in two new elements.
+// Keeping both images at the same displayed size makes the resulting PDF useful for inspecting whether
+// equal sources are loaded, decoded and embedded as one resource or as one resource per element.
+var repeatedImageSvgDataUri = "data:image/svg+xml;base64," + Convert.ToBase64String(
+    File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "peach.svg")));
+var repeatedImagePngDataUri = "data:image/png;base64," + Convert.ToBase64String(
+    File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "peach.png")));
+
+var repeatedImageSourcesHtml =
+    $$"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Repeated image sources</title>
+      <style>
+        @page { size: A4; margin: 18mm }
+        body { margin: 0; color: #543b38; font: 14px Arial, sans-serif }
+        .page + .page { break-before: page }
+        .eyebrow { color: #a64246; font-size: 11px; font-weight: bold; letter-spacing: 2px }
+        h1 { margin: 8px 0 10px; color: #9f3f45; font-size: 28px }
+        .intro { max-width: 620px; margin: 0 0 28px; line-height: 1.55 }
+        table { width: 100%; border-collapse: separate; border-spacing: 18px 0; margin: 0 -18px }
+        td { width: 50%; padding: 24px; text-align: center; vertical-align: top;
+             background: #fff8f3; border: 1px solid #e8b9a4; border-radius: 12px }
+        img { display: block; width: 160px; height: 160px; margin: 0 auto 18px auto; object-fit: contain }
+        .kind { color: #a64246; font-size: 18px; font-weight: bold }
+        .source { margin-top: 7px; color: #7e6964; font: 11px Consolas, monospace }
+        .note { margin-top: 28px; padding: 14px 16px; line-height: 1.5;
+                background: #f7ebe4; border-left: 4px solid #c95e58 }
+      </style>
+    </head>
+    <body>
+      <section class="page">
+        <div class="eyebrow">PAGE 1 / 2 · ORDINARY FLOW CONTENT</div>
+        <h1>The same two image sources</h1>
+        <p class="intro">Both images below are ordinary <code>&lt;img&gt;</code> elements. Their sources are inline base64 data URIs made from the real PeachPDF logo assets.</p>
+        <table><tr>
+          <td>
+            <img src="{{repeatedImageSvgDataUri}}" alt="PeachPDF SVG logo">
+            <div class="kind">SVG logo</div>
+            <div class="source">data:image/svg+xml;base64,…</div>
+          </td>
+          <td>
+            <img src="{{repeatedImagePngDataUri}}" alt="PeachPDF PNG logo">
+            <div class="kind">PNG logo</div>
+            <div class="source">data:image/png;base64,…</div>
+          </td>
+        </tr></table>
+        <div class="note">Page 2 creates two new image elements with these exact same source strings and display dimensions.</div>
+      </section>
+
+      <section class="page">
+        <div class="eyebrow">PAGE 2 / 2 · TWO NEW IMG ELEMENTS</div>
+        <h1>The identical sources, repeated</h1>
+        <p class="intro">These are not fixed headers or cloned running content: they are separate elements in normal document flow, using the same base64 source values as page 1.</p>
+        <table><tr>
+          <td>
+            <img src="{{repeatedImageSvgDataUri}}" alt="PeachPDF SVG logo repeated">
+            <div class="kind">SVG logo, repeated</div>
+            <div class="source">same data:image/svg+xml;base64,…</div>
+          </td>
+          <td>
+            <img src="{{repeatedImagePngDataUri}}" alt="PeachPDF PNG logo repeated">
+            <div class="kind">PNG logo, repeated</div>
+            <div class="source">same data:image/png;base64,…</div>
+          </td>
+        </tr></table>
+        <div class="note">Inspect the PDF's Form and Image XObjects to see whether each pair shares one stored resource or produces one resource per element.</div>
+      </section>
+    </body>
+    </html>
+    """;
+
+await SaveShowcaseAsync("repeated_image_sources", "Graphics & Effects", "Repeated Image Sources",
+    "Two normal-flow pages repeat the same base64 PeachPDF SVG and PNG logo in separate img elements, making SVG Form XObject and raster Image XObject reuse directly inspectable.",
+    repeatedImageSourcesHtml, pdfConfig);
+
 // --- advanced SVG text showcase (gradient/pattern fill, stroke, textPath) ---
 
 static string TextPanel(string desc, string svg) =>
