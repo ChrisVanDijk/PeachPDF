@@ -24,6 +24,12 @@
     which fonts it needs.
   -->
   <ItemGroup>
+    <None Include="..\..\docs\assets\img\peach.svg" Link="peach.svg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\..\docs\assets\img\peach.png" Link="peach.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include="..\..\assets\fonts\ColorTestV1.ttf" Link="ColorTestV1.ttf">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
